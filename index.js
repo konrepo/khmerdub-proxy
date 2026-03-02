@@ -12,41 +12,43 @@ app.get("/proxy", async (req, res) => {
 
   try {
     const response = await axios.get(targetUrl, {
-      responseType: "arraybuffer",
+      responseType: "stream",
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36",
         "Referer": "https://ok.ru/"
-      }
+      },
+      timeout: 20000
     });
 
     const contentType =
-      response.headers["content-type"] || "";
+      response.headers["content-type"] || "application/vnd.apple.mpegurl";
 
-    // If it's m3u8 playlist
-    if (contentType.includes("mpegurl") || targetUrl.includes(".m3u8")) {
+    // If it's NOT m3u8, just pipe normally
+    if (!targetUrl.includes(".m3u8")) {
+      res.setHeader("Content-Type", contentType);
+      return response.data.pipe(res);
+    }
 
-      let text = response.data.toString();
+    // For m3u8 — rewrite relative URLs
+    let body = "";
+
+    response.data.on("data", chunk => {
+      body += chunk.toString();
+    });
+
+    response.data.on("end", () => {
 
       const base = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
 
-      text = text.replace(
-        /^(?!#)(.+)$/gm,
-        (line) => {
-          if (line.startsWith("http")) {
-            return `/proxy?url=${encodeURIComponent(line)}`;
-          }
-          return `/proxy?url=${encodeURIComponent(base + line)}`;
-        }
+      body = body.replace(
+        /^([^#][^\n]+)/gm,
+        line => line.startsWith("http") ? line : base + line
       );
 
-      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-      return res.send(text);
-    }
-
-    // Otherwise stream binary (ts / mp4)
-    res.setHeader("Content-Type", contentType);
-    return res.send(response.data);
+      res.setHeader("Content-Type", contentType);
+      res.send(body);
+    });
 
   } catch (err) {
     console.error("Proxy error:", err.message);
