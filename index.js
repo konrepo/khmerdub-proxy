@@ -37,7 +37,7 @@ app.get("/proxy", async (req, res) => {
 
         try {
           const absoluteUrl = new URL(line, base).href;
-          return `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+          return `https://khmerdub-proxy.onrender.com/proxy?url=${encodeURIComponent(absoluteUrl)}`;
         } catch {
           return line;
         }
