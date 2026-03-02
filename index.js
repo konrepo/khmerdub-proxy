@@ -3,7 +3,6 @@ const axios = require("axios");
 
 const app = express();
 
-// Simple OK.ru streaming proxy
 app.get("/proxy", async (req, res) => {
   const targetUrl = req.query.url;
 
@@ -13,28 +12,46 @@ app.get("/proxy", async (req, res) => {
 
   try {
     const response = await axios.get(targetUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36",
+        "Referer": "https://ok.ru/"
+      }
+    });
+
+    const contentType =
+      response.headers["content-type"] || "application/vnd.apple.mpegurl";
+
+    // If it's m3u8, rewrite relative paths
+    if (contentType.includes("application/vnd.apple.mpegurl")) {
+      const base = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
+
+      let playlist = response.data;
+
+      playlist = playlist.replace(
+        /^(?!#)(.+)$/gm,
+        (line) => {
+          if (line.startsWith("http")) return line;
+          return `/proxy?url=${encodeURIComponent(base + line)}`;
+        }
+      );
+
+      res.setHeader("Content-Type", contentType);
+      return res.send(playlist);
+    }
+
+    // Otherwise stream normally (ts segments)
+    const stream = await axios.get(targetUrl, {
       responseType: "stream",
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36",
         "Referer": "https://ok.ru/"
-      },
-      timeout: 20000
+      }
     });
 
-    // Preserve original content-type if possible
-    res.setHeader(
-      "Content-Type",
-      response.headers["content-type"] || "application/vnd.apple.mpegurl"
-    );
-
-    // Handle stream errors safely
-    response.data.on("error", (err) => {
-      console.error("Stream error:", err.message);
-      res.end();
-    });
-
-    response.data.pipe(res);
+    res.setHeader("Content-Type", stream.headers["content-type"]);
+    stream.data.pipe(res);
 
   } catch (err) {
     console.error("Proxy error:", err.message);
