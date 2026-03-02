@@ -19,31 +19,30 @@ app.get("/proxy", async (req, res) => {
 
     const contentType = response.headers["content-type"] || "";
 
-    // If it's an m3u8 playlist
+    // If playlist
     if (contentType.includes("application/vnd.apple.mpegurl") || targetUrl.includes(".m3u8")) {
 
       let playlist = response.data.toString();
+      const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
 
-      const base = new URL(targetUrl).origin;
+      playlist = playlist.replace(/^(?!#)(.+)$/gm, (line) => {
+        if (!line.trim()) return line;
 
-      // Rewrite relative URLs to go back through proxy
-      playlist = playlist.replace(
-        /^(?!#)(.+)$/gm,
-        (line) => {
-          if (line.startsWith("http")) {
-            return `/proxy?url=${encodeURIComponent(line)}`;
-          }
-          if (line.trim() === "") return line;
-          const absolute = base + "/" + line;
-          return `/proxy?url=${encodeURIComponent(absolute)}`;
+        let absoluteUrl;
+
+        if (line.startsWith("http")) {
+          absoluteUrl = line;
+        } else {
+          absoluteUrl = baseUrl + line;
         }
-      );
+
+        return `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+      });
 
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       return res.send(playlist);
     }
 
-    // Otherwise just stream
     res.setHeader("Content-Type", contentType);
     res.send(response.data);
 
