@@ -3,6 +3,9 @@ const axios = require("axios");
 
 const app = express();
 
+const UA =
+  "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36";
+
 app.get("/proxy", async (req, res) => {
   const targetUrl = req.query.url;
 
@@ -11,11 +14,12 @@ app.get("/proxy", async (req, res) => {
   }
 
   try {
-    const response = await axios.get(targetUrl, {
-      responseType: "arraybuffer",
+    const response = await axios({
+      method: "GET",
+      url: targetUrl,
+      responseType: "stream",
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36",
+        "User-Agent": UA,
         "Referer": "https://ok.ru/"
       },
       timeout: 20000
@@ -23,33 +27,46 @@ app.get("/proxy", async (req, res) => {
 
     const contentType = response.headers["content-type"] || "";
 
-    // If playlist (.m3u8)
+    // CORS (required for iOS)
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS");
+
+    // If playlist (.m3u8) → rewrite
     if (
       contentType.includes("application/vnd.apple.mpegurl") ||
       targetUrl.includes(".m3u8")
     ) {
-      let playlist = response.data.toString();
+      let playlist = "";
 
-      const base = new URL(targetUrl);
-
-      playlist = playlist.replace(/^(?!#)(.+)$/gm, (line) => {
-        if (!line.trim()) return line;
-
-        try {
-          const absoluteUrl = new URL(line, base).href;
-          return `https://khmerdub-proxy.onrender.com/proxy?url=${encodeURIComponent(absoluteUrl)}`;
-        } catch {
-          return line;
-        }
+      response.data.on("data", chunk => {
+        playlist += chunk.toString();
       });
 
-      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-      return res.send(playlist);
+      response.data.on("end", () => {
+        const base = new URL(targetUrl);
+
+        playlist = playlist.replace(/^(?!#)(.+)$/gm, line => {
+          if (!line.trim()) return line;
+
+          try {
+            const absoluteUrl = new URL(line, base).href;
+            return `https://khmerdub-proxy.onrender.com/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+          } catch {
+            return line;
+          }
+        });
+
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+        res.send(playlist);
+      });
+
+      return;
     }
 
-    // If .ts segment or other media
+    // Segments (.ts / mp4)
     res.setHeader("Content-Type", contentType);
-    res.send(response.data);
+    response.data.pipe(res);
 
   } catch (err) {
     console.error("Proxy error:", err.message);
