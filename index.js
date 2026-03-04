@@ -4,9 +4,11 @@ const axios = require("axios");
 const app = express();
 
 const UA =
-  "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 
-// CORS + Preflight Support
+const PROXY_BASE = "https://khmerdub-proxy.onrender.com";
+
+// CORS + Preflight
 app.options("/proxy", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -14,11 +16,10 @@ app.options("/proxy", (req, res) => {
   return res.sendStatus(200);
 });
 
-// Main Proxy Route
+// Main Proxy
 app.get("/proxy", async (req, res) => {
   const targetUrl = req.query.url;
 
-  // CORS headers (required for iOS/tvOS WebKit)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS");
@@ -34,14 +35,18 @@ app.get("/proxy", async (req, res) => {
       responseType: "stream",
       headers: {
         "User-Agent": UA,
-        "Referer": "https://ok.ru/"
+        "Referer": "https://ok.ru/",
+        "Origin": "https://ok.ru/",
+        "Accept": req.headers["accept"] || "*/*",
+        "Range": req.headers["range"] || undefined
       },
-      timeout: 20000
+      timeout: 30000,
+      validateStatus: () => true
     });
 
     const contentType = response.headers["content-type"] || "";
 
-    // If HLS Playlist (.m3u8) → Rewrite URLs
+    // 🔥 If HLS Playlist (.m3u8) → rewrite URLs
     if (
       contentType.includes("application/vnd.apple.mpegurl") ||
       targetUrl.includes(".m3u8")
@@ -61,12 +66,13 @@ app.get("/proxy", async (req, res) => {
 
             try {
               const absoluteUrl = new URL(line, base).href;
-              return `https://khmerdub-proxy.onrender.com/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+              return `${PROXY_BASE}/proxy?url=${encodeURIComponent(absoluteUrl)}`;
             } catch {
               return line;
             }
           });
 
+          res.status(200);
           res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
           res.send(playlist);
         } catch (err) {
@@ -78,8 +84,14 @@ app.get("/proxy", async (req, res) => {
       return;
     }
 
-    //   If Segment (.ts / .mp4 / other media), Stream directly (no buffering)
-    res.setHeader("Content-Type", contentType);
+    // 🔥 For video segments (.ts / .mp4 / others)
+    res.status(response.status);
+
+    // Forward all headers (important for iOS)
+    for (const [key, value] of Object.entries(response.headers)) {
+      res.setHeader(key, value);
+    }
+
     response.data.pipe(res);
 
   } catch (err) {
@@ -88,12 +100,11 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
-//   Health Check
+// Health Check
 app.get("/", (req, res) => {
   res.send("KhmerDub Proxy Running");
 });
 
-//   Start Server
 const port = process.env.PORT || 10000;
 
 app.listen(port, () => {
